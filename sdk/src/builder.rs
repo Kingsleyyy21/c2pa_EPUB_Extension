@@ -30,7 +30,7 @@ use crate::{
     assertion::AssertionDecodeError,
     assertions::{
         labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        Thumbnail, User, UserCbor
     },
     claim::Claim,
     error::{Error, Result},
@@ -790,6 +790,12 @@ impl Builder {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&box_hash, &salt)
                 }
+                // TODO: Possible fix for EPUB Verification error
+                // CollectionHash::LABEL => {
+                //     let raw: RawCollectionHash = manifest_assertion.to_assertion()?;
+                //     let collection_hash: CollectionHash = raw.into();
+                //     claim.add_assertion_with_salt(&collection_hash, &salt)
+                // }
                 DataHash::LABEL => {
                     let data_hash: DataHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&data_hash, &salt)
@@ -948,7 +954,7 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-
+        println!("pub fn sign_box_hashed_embeddable: {}", format);
         let mut store = self.to_store()?;
         let bytes = if _sync {
             store.get_box_hashed_embeddable_manifest(signer)
@@ -988,6 +994,7 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let format = format_to_mime(format);
+        println!("Signing with format: {format}");
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
@@ -1172,8 +1179,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        assertions::{c2pa_action, BoxHash},
-        asset_handlers::jpeg_io::JpegIO,
+        assertions::{c2pa_action},
+        // asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
@@ -1650,7 +1657,7 @@ mod tests {
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
-        use crate::asset_io::{CAIWriter, HashBlockObjectType};
+        use crate::{asset_handlers::jpeg_io::JpegIO, asset_io::{CAIWriter, HashBlockObjectType}};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
 
