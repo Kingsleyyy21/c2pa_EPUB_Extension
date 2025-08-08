@@ -7,11 +7,8 @@ use crate::{
     error::{Error, Result},
     Builder, Reader, Signer
 };
-use digest::{Digest, DynDigest};
 
-use sha2::{Sha256, Sha384, Sha512};
 use std::{
-    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path},
@@ -640,99 +637,6 @@ pub fn add_empty_file_to_epub(path: &Path) -> Result<()> {
     Ok(())
 }
 
-mod zip_hasher {
-    use super::*;
-    use std::io::{BufReader, Read, Seek, SeekFrom};
-
-    #[derive(Debug, Default)]
-    pub struct ZipHashCollection {
-        pub entry_hashes: BTreeMap<String, Vec<u8>>,
-        pub central_directory_hash: Vec<u8>,
-    }
-
-    fn new_hasher(alg: &str) -> Result<Box<dyn DynDigest>> {
-        match alg {
-            "sha256" | "256" => Ok(Box::new(Sha256::new())),
-            "sha384" | "384" => Ok(Box::new(Sha384::new())),
-            "sha512" | "512" => Ok(Box::new(Sha512::new())),
-            _ => Err(Error::UnsupportedAlgorithm(alg.to_string())),
-        }
-    }
-
-    fn hash_block<R: Read + Seek>(
-        reader: &mut R,
-        hasher: &mut dyn DynDigest,
-        start: u64,
-        size: u64,
-    ) -> Result<()> {
-        reader.seek(SeekFrom::Start(start))?;
-        let mut take_reader = reader.take(size);
-        let mut buffer = [0; 8192];
-        loop {
-            let bytes_read = take_reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..bytes_read]);
-        }
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn calculate_hashes(
-        path: &Path,
-        alg: &str,
-        manifest_path: &str,
-    ) -> Result<ZipHashCollection> {
-        let file = File::open(path)?;
-        let mut reader = BufReader::new(file);
-        let mut result = ZipHashCollection::default();
-
-        let entry_metadata: Vec<(String, u64, u64)>;
-        let cd_metadata: (u64, u64);
-        let file_size = reader.get_ref().metadata()?.len();
-        {
-            let mut archive = ZipArchive::new(&mut reader)?;
-            let mut entries = Vec::new();
-            for i in 0..archive.len() {
-                let file_in_zip = archive.by_index_raw(i)?;
-                let file_name = file_in_zip.name().to_string();
-                if file_name == manifest_path {
-                    continue;
-                }
-                let header_offset = file_in_zip.header_start();
-                let data_size = file_in_zip.compressed_size();
-                let local_header_size = file_in_zip.data_start() - header_offset;
-                let total_block_size = local_header_size + data_size;
-                entries.push((file_name, header_offset, total_block_size));
-            }
-            entry_metadata = entries;
-
-            let cd_start = archive.central_directory_start();
-
-            if file_size < cd_start {
-                println!(" Invalid ZIP structure: EOCD offset is before Central Directory offset.");
-                return Err(Error::EmbeddingError);
-            }
-            cd_metadata = (cd_start, file_size - cd_start);
-        }
-
-        for (file_name, offset, size) in entry_metadata {
-            let mut hasher = new_hasher(alg)?;
-            hash_block(&mut reader, &mut *hasher, offset, size)?;
-            result
-                .entry_hashes
-                .insert(file_name, hasher.finalize().to_vec());
-        }
-
-        let (cd_start, cd_size) = cd_metadata;
-        let mut cd_hasher = new_hasher(alg)?;
-        hash_block(&mut reader, &mut *cd_hasher, cd_start, cd_size)?;
-        result.central_directory_hash = cd_hasher.finalize().to_vec();
-
-        Ok(result)
-    }
-}
 
 mod zip_util {
     use zip::write::FileOptions;
